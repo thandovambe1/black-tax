@@ -1,3 +1,4 @@
+import Image from "next/image";
 import { cn } from "@/lib/utils";
 
 export function LogoMark({ className }: { className?: string }) {
@@ -8,8 +9,15 @@ export function LogoMark({ className }: { className?: string }) {
         className,
       )}
     >
-      {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img src="/images/black-tax-logo.png" alt="Black Tax emblem" className="h-full w-full object-contain p-1.5" />
+      <Image
+        src="/images/black-tax-logo.png"
+        alt="Black Tax emblem"
+        width={1200}
+        height={1600}
+        loading="eager"
+        unoptimized
+        className="h-full w-full object-contain p-1.5"
+      />
     </span>
   );
 }
