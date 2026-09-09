@@ -89,7 +89,7 @@ export function MembershipForm() {
     defaultValues: {
       contributionAmount: undefined,
       debitDate: "1st",
-      paymentMethod: "PayFast",
+      paymentMethod: "DebiCheck / Debit Order",
       consent: false,
     },
   });
@@ -105,7 +105,13 @@ export function MembershipForm() {
     const data = (await response.json()) as { message: string };
     setPending(false);
     setMessage(data.message);
-    if (response.ok) form.reset({ contributionAmount: undefined, debitDate: "1st", paymentMethod: "PayFast", consent: false });
+    if (response.ok)
+      form.reset({
+        contributionAmount: undefined,
+        debitDate: "1st",
+        paymentMethod: "DebiCheck / Debit Order",
+        consent: false,
+      });
   });
 
   return (
@@ -114,23 +120,42 @@ export function MembershipForm() {
       <Input label="Email" type="email" error={form.formState.errors.email?.message} {...form.register("email")} />
       <Input label="Phone" error={form.formState.errors.phone?.message} {...form.register("phone")} />
       <div className="grid gap-4 sm:grid-cols-2">
-        <Input label="Monthly contribution (R)" type="number" min={10} placeholder="From R10" error={form.formState.errors.contributionAmount?.message} {...form.register("contributionAmount")} />
+        <Input
+          label="Monthly contribution (R)"
+          type="number"
+          min={10}
+          placeholder="From R10"
+          error={form.formState.errors.contributionAmount?.message}
+          {...form.register("contributionAmount")}
+        />
         <label className="block text-sm font-medium text-slate-800">
-          Debit date
+          Debit collection date
           <select className="mt-2 w-full rounded-2xl border border-black/10 bg-white px-4 py-3 text-sm" {...form.register("debitDate")}>
-            {['1st','7th','15th','20th','25th','Month End'].map((item) => <option key={item}>{item}</option>)}
+            {["1st", "7th", "15th", "20th", "25th", "Month End"].map((item) => (
+              <option key={item}>{item}</option>
+            ))}
           </select>
         </label>
       </div>
       <label className="block text-sm font-medium text-slate-800">
-        Preferred payment provider
+        Preferred contribution rail
         <select className="mt-2 w-full rounded-2xl border border-black/10 bg-white px-4 py-3 text-sm" {...form.register("paymentMethod")}>
-          {['PayFast','Peach Payments','Ozow','Card Payments','EFT','Apple Pay','Google Pay'].map((item) => <option key={item}>{item}</option>)}
+          {[
+            "DebiCheck / Debit Order",
+            "Recurring Card (Yoco)",
+            "Instant EFT / Ozow",
+            "Manual EFT",
+          ].map((item) => (
+            <option key={item}>{item}</option>
+          ))}
         </select>
       </label>
       <label className="flex items-start gap-3 rounded-2xl bg-[#f7f2e8] p-4 text-sm text-slate-700">
         <input type="checkbox" className="mt-1" {...form.register("consent")} />
-        <span>I consent to the collection of my personal information in line with POPIA and understand recurring contributions will be processed only through licensed providers.</span>
+        <span>
+          I consent to the collection of my personal information in line with POPIA and understand recurring
+          contributions are processed exclusively through licensed South African payment providers.
+        </span>
       </label>
       <SubmitButton pending={pending}>Join Black Tax</SubmitButton>
       {message ? <p className="text-sm text-slate-600">{message}</p> : null}
