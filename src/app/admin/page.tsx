@@ -1,23 +1,33 @@
 import type { Metadata } from "next";
 import { redirect } from "next/navigation";
-import { desc } from "drizzle-orm";
+import { desc, eq, sql } from "drizzle-orm";
 import { db } from "@/db";
 import {
   assistanceRequests,
   auditLogs,
   contactMessages,
+  debitCollections,
+  debitMandates,
   donations,
+  financialAdjustments,
+  financialAuditLogs,
+  financialLedger,
   financialReports,
   memberships,
   newsletterSubscribers,
   payouts,
   projects,
+  quarterlyFinancialReports,
+  reconciliationDiscrepancies,
+  reconciliationRecords,
   successStories,
   volunteers,
 } from "@/db/schema";
 import { AdminDashboard, type AdminData } from "@/components/admin/admin-dashboard";
 import { ensureAdminSeed, getAdminSession } from "@/lib/admin-auth";
+import { getLedgerSummary } from "@/lib/ledger";
 import { formatCurrency } from "@/lib/utils";
+import { SOUTH_AFRICAN_BANKS } from "@/lib/payments/bank-registry";
 
 export const metadata: Metadata = {
   title: "Admin Dashboard",
@@ -46,6 +56,15 @@ export default async function AdminPage() {
     logRows,
     donationRows,
     payoutRows,
+    mandateRows,
+    collectionRows,
+    discrepancyRows,
+    reconRecordRows,
+    quarterlyReportRows,
+    ledgerRows,
+    adjustmentRows,
+    financialLogRows,
+    ledgerSummary,
   ] = await Promise.all([
     db.select().from(memberships).orderBy(desc(memberships.id)),
     db.select().from(assistanceRequests).orderBy(desc(assistanceRequests.id)),
@@ -58,28 +77,35 @@ export default async function AdminPage() {
     db.select().from(auditLogs).orderBy(desc(auditLogs.id)).limit(100),
     db.select().from(donations).orderBy(desc(donations.id)).limit(200),
     db.select().from(payouts).orderBy(desc(payouts.id)).limit(200),
+    db.select().from(debitMandates).orderBy(desc(debitMandates.id)).limit(100),
+    db.select().from(debitCollections).orderBy(desc(debitCollections.id)).limit(100),
+    db.select().from(reconciliationDiscrepancies).where(eq(reconciliationDiscrepancies.status, "OPEN")).orderBy(desc(reconciliationDiscrepancies.id)),
+    db.select().from(reconciliationRecords).orderBy(desc(reconciliationRecords.id)).limit(1),
+    db.select().from(quarterlyFinancialReports).orderBy(desc(quarterlyFinancialReports.id)),
+    db.select().from(financialLedger).orderBy(desc(financialLedger.id)).limit(50),
+    db.select().from(financialAdjustments).orderBy(desc(financialAdjustments.id)).limit(50),
+    db.select().from(financialAuditLogs).orderBy(desc(financialAuditLogs.id)).limit(50),
+    getLedgerSummary(),
   ]);
 
-  const succeededDonations = donationRows.filter((row) => row.status === "succeeded");
-  const donationTotal = succeededDonations.reduce((sum, row) => sum + row.amount, 0);
-  const releasedPayouts = payoutRows.filter((row) => row.status === "released");
-  const payoutTotal = releasedPayouts.reduce((sum, row) => sum + row.amount, 0);
-  const approvedMonthly = membershipRows
-    .filter((row) => row.status === "approved")
-    .reduce((sum, row) => sum + row.contributionAmount, 0);
+  const succeededDonations = donationRows.filter((row) => row.status === "SUCCEEDED");
+  const pendingDonations = donationRows.filter((row) => row.status === "PENDING" || row.status === "PROCESSING");
+  const failedDonations = donationRows.filter((row) => row.status === "FAILED");
+  const refundedDonations = donationRows.filter((row) => row.status === "REFUNDED" || row.status === "PARTIALLY_REFUNDED");
+  const activeMandates = mandateRows.filter((row) => row.status === "ACTIVE" || row.status === "AUTHORISED");
 
   const data: AdminData = {
     stats: [
-      { label: "Users", value: String(membershipRows.length) },
-      { label: "Members", value: String(membershipRows.filter((row) => row.status === "approved").length) },
-      { label: "Applications", value: String(requestRows.length) },
-      { label: "Payments", value: String(membershipRows.filter((row) => row.status === "approved").length) },
-      { label: "Projects", value: String(projectRows.length) },
-      { label: "Volunteers", value: String(volunteerRows.length) },
-      { label: "Partners", value: "0" },
-      { label: "Reports", value: String(reportRows.length) },
-      { label: "Revenue (donations)", value: formatCurrency(donationTotal / 100) },
-      { label: "Expenses (payouts)", value: formatCurrency(payoutTotal / 100) },
+      { label: "Total Gross Raised", value: formatCurrency(ledgerSummary.totalGrossCents / 100) },
+      { label: "Net Funds for Community", value: formatCurrency(ledgerSummary.netRaisedCents / 100) },
+      { label: "Active Debit Mandates", value: String(activeMandates.length) },
+      { label: "Reconciliation Status", value: discrepancyRows.length === 0 ? "100% Matched" : `${discrepancyRows.length} Issues` },
+      { label: "Payouts Released", value: formatCurrency(ledgerSummary.totalPayoutsCents / 100) },
+      { label: "Settled Donations", value: String(succeededDonations.length) },
+      { label: "Assistance Requests", value: String(requestRows.length) },
+      { label: "Registered Volunteers", value: String(volunteerRows.length) },
+      { label: "Newsletter Subscribers", value: String(subscriberRows.length) },
+      { label: "Active Projects", value: String(projectRows.length) },
     ],
     memberships: membershipRows.map((row) => ({
       id: row.id,
@@ -151,11 +177,20 @@ export default async function AdminPage() {
     donations: donationRows.map((row) => ({
       id: row.id,
       reference: row.reference,
+      provider: row.provider,
+      amount: row.amount,
+      feeAmount: row.feeAmount,
+      netAmount: row.netAmount,
+      currency: row.currency,
+      status: row.status,
       donorName: row.donorName,
       donorEmail: row.donorEmail,
-      amount: row.amount,
-      status: row.status,
+      donorPhone: row.donorPhone,
+      province: row.province,
       isRecurring: row.isRecurring,
+      isAnonymous: row.isAnonymous,
+      paymentMethod: row.paymentMethod,
+      reconciliationStatus: row.reconciliationStatus,
       createdAt: fmt(row.createdAt),
     })),
     payouts: payoutRows.map((row) => ({
@@ -169,6 +204,136 @@ export default async function AdminPage() {
       status: row.status,
       createdAt: fmt(row.createdAt),
     })),
+    financeDetails: {
+      summary: {
+        grossRaisedCents: ledgerSummary.totalGrossCents,
+        grossRaisedFormatted: formatCurrency(ledgerSummary.totalGrossCents / 100),
+        netFundsCents: ledgerSummary.netRaisedCents,
+        netFundsFormatted: formatCurrency(ledgerSummary.netRaisedCents / 100),
+        feesCents: ledgerSummary.totalFeesCents,
+        feesFormatted: formatCurrency(ledgerSummary.totalFeesCents / 100),
+        refundsCents: ledgerSummary.totalRefundsCents,
+        refundsFormatted: formatCurrency(ledgerSummary.totalRefundsCents / 100),
+        chargebacksCents: ledgerSummary.totalChargebacksCents,
+        chargebacksFormatted: formatCurrency(ledgerSummary.totalChargebacksCents / 100),
+        payoutsCents: ledgerSummary.totalPayoutsCents,
+        payoutsFormatted: formatCurrency(ledgerSummary.totalPayoutsCents / 100),
+        availableCashCents: ledgerSummary.availableCashBalanceCents,
+        availableCashFormatted: formatCurrency(ledgerSummary.availableCashBalanceCents / 100),
+        successfulCount: succeededDonations.length,
+        pendingCount: pendingDonations.length,
+        failedCount: failedDonations.length,
+        refundedCount: refundedDonations.length,
+        activeMandateCount: activeMandates.length,
+        openDiscrepancyCount: discrepancyRows.length,
+        lastReconciliationStatus: reconRecordRows[0]?.status ?? "MATCHED",
+        lastReconciliationDate: reconRecordRows[0]?.createdAt ? fmt(reconRecordRows[0].createdAt) : null,
+      },
+      donations: donationRows.map((d) => ({
+        id: d.id,
+        reference: d.reference,
+        provider: d.provider,
+        amount: d.amount,
+        feeAmount: d.feeAmount,
+        netAmount: d.netAmount,
+        currency: d.currency,
+        status: d.status,
+        donorName: d.donorName,
+        donorEmail: d.donorEmail,
+        donorPhone: d.donorPhone,
+        province: d.province,
+        isRecurring: d.isRecurring,
+        isAnonymous: d.isAnonymous,
+        paymentMethod: d.paymentMethod,
+        reconciliationStatus: d.reconciliationStatus,
+        createdAt: fmt(d.createdAt),
+      })),
+      mandates: mandateRows.map((m) => ({
+        id: m.id,
+        mandateReference: m.mandateReference,
+        donorName: m.donorName,
+        donorEmail: m.donorEmail,
+        bankName: m.bankName,
+        accountNumberMasked: m.accountNumberMasked,
+        amount: m.amount,
+        collectionDay: m.collectionDay,
+        mandateType: m.mandateType,
+        status: m.status,
+        authChannel: m.authChannel,
+        province: m.province,
+        createdAt: fmt(m.createdAt),
+      })),
+      collections: collectionRows.map((c) => ({
+        id: c.id,
+        collectionReference: c.collectionReference,
+        mandateId: c.mandateId,
+        amount: c.amount,
+        feeAmount: c.feeAmount,
+        status: c.status,
+        collectionDate: fmt(c.collectionDate),
+      })),
+      discrepancies: discrepancyRows.map((d) => ({
+        id: d.id,
+        reference: d.reference,
+        provider: d.provider,
+        discrepancyType: d.discrepancyType,
+        internalAmount: d.internalAmount,
+        providerAmount: d.providerAmount,
+        internalStatus: d.internalStatus,
+        providerStatus: d.providerStatus,
+        details: d.details,
+        status: d.status,
+        createdAt: fmt(d.createdAt),
+      })),
+      quarterlyReports: quarterlyReportRows.map((q) => ({
+        id: q.id,
+        quarterKey: q.quarterKey,
+        year: q.year,
+        quarterNumber: q.quarterNumber,
+        version: q.version,
+        grossIncomeCents: q.grossIncomeCents,
+        feeAmountCents: q.feeAmountCents,
+        refundsCents: q.refundsCents,
+        netFundsCents: q.netFundsCents,
+        donorCount: q.donorCount,
+        successfulTxCount: q.successfulTxCount,
+        activeMandateCount: q.activeMandateCount,
+        growthPercentage: q.growthPercentage,
+        executiveSummary: q.executiveSummary,
+        provinceBreakdown: q.provinceBreakdown as Record<string, { totalCents: number; count: number }> | null,
+        createdAt: fmt(q.createdAt),
+      })),
+      ledger: ledgerRows.map((l) => ({
+        id: l.id,
+        entryReference: l.entryReference,
+        entryType: l.entryType,
+        amount: l.amount,
+        balanceAfter: l.balanceAfter,
+        description: l.description,
+        recordedBy: l.recordedBy,
+        createdAt: fmt(l.createdAt),
+      })),
+      adjustments: adjustmentRows.map((a) => ({
+        id: a.id,
+        adjustmentReference: a.adjustmentReference,
+        originalTransactionType: a.originalTransactionType,
+        reason: a.reason,
+        amount: a.amount,
+        adjustmentType: a.adjustmentType,
+        adminEmail: a.adminEmail,
+        createdAt: fmt(a.createdAt),
+      })),
+      auditLogs: financialLogRows.map((log) => ({
+        id: log.id,
+        adminEmail: log.adminEmail,
+        action: log.action,
+        entity: log.entity,
+        transactionReference: log.transactionReference,
+        detail: log.detail,
+        createdAt: fmt(log.createdAt),
+      })),
+      bankRegistry: SOUTH_AFRICAN_BANKS,
+    },
   };
 
   return (
