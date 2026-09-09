@@ -2,6 +2,8 @@ import { db } from "@/db";
 import {
   assistanceRequests,
   contactMessages,
+  debitCollections,
+  debitMandates,
   donations,
   financialReports,
   memberships,
@@ -39,8 +41,17 @@ export function emptyHomepageData() {
       applicationsApproved: 0,
       volunteers: 0,
       inquiries: 0,
+      activeMandates: 0,
     },
     provinceBreakdown: [] as { province: string; funded: number }[],
+    recentVerifiedActivity: [] as {
+      id: number;
+      displayDonor: string;
+      province: string;
+      amountRand: number;
+      isRecurring: boolean;
+      createdAt: string;
+    }[],
   };
 }
 
@@ -71,6 +82,7 @@ async function loadHomepageData() {
     requestApprovedRow,
     volunteerCountRow,
     contactCountRow,
+    activeMandatesRow,
   ] = await Promise.all([
     db.select().from(projects).orderBy(desc(projects.featured), desc(projects.id)).limit(4),
     db.select().from(successStories).orderBy(desc(successStories.id)).limit(3),
@@ -84,25 +96,51 @@ async function loadHomepageData() {
     db.select({ value: count() }).from(assistanceRequests).where(eq(assistanceRequests.status, "approved")),
     db.select({ value: count() }).from(volunteers),
     db.select({ value: count() }).from(contactMessages),
+    db
+      .select({ count: sql<number>`count(*)` })
+      .from(debitMandates)
+      .where(sql`${debitMandates.status} IN ('ACTIVE', 'AUTHORISED')`),
   ]);
 
-  // Real money actually received (Yoco donations, stored in cents) and
-  // real money actually released to service providers (payouts, in cents).
-  const [donationTotals, payoutTotals] = await Promise.all([
+  // Real money actually received (card donations + settled debit collections)
+  const [donationTotals, debitTotals, payoutTotals, recentDonations] = await Promise.all([
     db
       .select({
         totalCents: sql<number>`COALESCE(SUM(${donations.amount}), 0)`,
         donorCount: count(),
       })
       .from(donations)
-      .where(eq(donations.status, "succeeded")),
+      .where(sql`${donations.status} IN ('SUCCEEDED', 'succeeded')`),
+    db
+      .select({
+        totalCents: sql<number>`COALESCE(SUM(${debitCollections.amount}), 0)`,
+      })
+      .from(debitCollections)
+      .where(sql`${debitCollections.status} IN ('COLLECTED', 'collected')`),
     db
       .select({ totalCents: sql<number>`COALESCE(SUM(${payouts.amount}), 0)` })
       .from(payouts)
-      .where(eq(payouts.status, "released")),
+      .where(sql`${payouts.status} IN ('released', 'RELEASED')`),
+    db
+      .select({
+        id: donations.id,
+        donorName: donations.donorName,
+        isAnonymous: donations.isAnonymous,
+        province: donations.province,
+        amount: donations.amount,
+        isRecurring: donations.isRecurring,
+        createdAt: donations.createdAt,
+      })
+      .from(donations)
+      .where(sql`${donations.status} IN ('SUCCEEDED', 'succeeded')`)
+      .orderBy(desc(donations.id))
+      .limit(6),
   ]);
 
-  const donationsReceived = Number(donationTotals[0]?.totalCents ?? 0) / 100;
+  const cardDonationsCents = Number(donationTotals[0]?.totalCents ?? 0);
+  const debitCollectionsCents = Number(debitTotals[0]?.totalCents ?? 0);
+  const totalVerifiedReceivedCents = cardDonationsCents + debitCollectionsCents;
+  const donationsReceived = totalVerifiedReceivedCents / 100;
   const fundsReleased = Number(payoutTotals[0]?.totalCents ?? 0) / 100;
 
   const totals = await db
@@ -116,14 +154,31 @@ async function loadHomepageData() {
 
   const provinceBreakdown = await db
     .select({
-      province: projects.province,
-      funded: sql<number>`COALESCE(SUM(${projects.amountFunded}), 0)`,
+      province: donations.province,
+      funded: sql<number>`COALESCE(SUM(${donations.amount}), 0) / 100`,
     })
-    .from(projects)
-    .groupBy(projects.province)
-    .orderBy(desc(sql<number>`COALESCE(SUM(${projects.amountFunded}), 0)`));
+    .from(donations)
+    .where(sql`${donations.status} IN ('SUCCEEDED', 'succeeded')`)
+    .groupBy(donations.province)
+    .orderBy(desc(sql<number>`COALESCE(SUM(${donations.amount}), 0)`));
 
   const provincesSupported = provinceBreakdown.length;
+
+  const recentVerifiedActivity = recentDonations.map((d) => {
+    let displayDonor = "Anonymous Donor";
+    if (!d.isAnonymous && d.donorName) {
+      const parts = d.donorName.trim().split(/\s+/);
+      displayDonor = parts.length > 1 ? `${parts[0]} ${parts[parts.length - 1][0]}.` : parts[0];
+    }
+    return {
+      id: d.id,
+      displayDonor,
+      province: d.province,
+      amountRand: d.amount / 100,
+      isRecurring: d.isRecurring,
+      createdAt: d.createdAt.toISOString(),
+    };
+  });
 
   return {
     projects: projectRows,
@@ -135,7 +190,6 @@ async function loadHomepageData() {
       totalBeneficiaries: Number(totals[0]?.beneficiaries ?? 0),
       members: membersApprovedRow[0]?.value ?? 0,
       monthlyDonations: Number(monthlyApprovedRow[0]?.value ?? 0),
-      // Actual funds received / released through the payment gateway.
       donationsReceived,
       donorCount: donationTotals[0]?.donorCount ?? 0,
       fundsReleased,
@@ -146,8 +200,10 @@ async function loadHomepageData() {
       applicationsApproved: requestApprovedRow[0]?.value ?? 0,
       volunteers: volunteerCountRow[0]?.value ?? 0,
       inquiries: contactCountRow[0]?.value ?? 0,
+      activeMandates: Number(activeMandatesRow[0]?.count ?? 0),
     },
     provinceBreakdown,
+    recentVerifiedActivity,
   };
 }
 
