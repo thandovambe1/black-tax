@@ -94,8 +94,8 @@ const inputClass =
   "mt-1.5 w-full rounded-2xl border border-white/12 bg-white/[0.04] px-4 py-3 text-sm text-white shadow-inner outline-none transition placeholder:text-white/30 focus:border-[#d6c3a1]/50 focus:ring-4 focus:ring-[#d6c3a1]/10";
 
 export function DonorWall() {
-  const [entries, setEntries] = useState<WallEntry[]>([]);
-  const [loading, setLoading] = useState(true);
+  // `null` = still loading; `[]` = loaded with zero messages.
+  const [entries, setEntries] = useState<WallEntry[] | null>(null);
   const [pending, setPending] = useState(false);
   const [feedback, setFeedback] = useState<string | null>(null);
   const [form, setForm] = useState({
@@ -107,15 +107,19 @@ export function DonorWall() {
     showAmount: false,
   });
 
-  const load = async () => {
-    const response = await fetch("/api/donor-wall", { cache: "no-store" });
-    const data = (await response.json()) as { messages: WallEntry[] };
-    setEntries(data.messages ?? []);
-    setLoading(false);
-  };
-
   useEffect(() => {
-    load();
+    let active = true;
+    fetch("/api/donor-wall", { cache: "no-store" })
+      .then((response) => response.json() as Promise<{ messages: WallEntry[] }>)
+      .then((data) => {
+        if (active) setEntries(data.messages ?? []);
+      })
+      .catch(() => {
+        if (active) setEntries([]);
+      });
+    return () => {
+      active = false;
+    };
   }, []);
 
   const submit = async (event: React.FormEvent<HTMLFormElement>) => {
@@ -139,7 +143,7 @@ export function DonorWall() {
     setPending(false);
     setFeedback(data.message);
     if (data.ok && data.entry) {
-      setEntries((prev) => [data.entry as WallEntry, ...prev]);
+      setEntries((prev) => [data.entry as WallEntry, ...(prev ?? [])]);
       setForm({ displayName: "", location: "", messageType: "support", message: "", amount: "", showAmount: false });
     }
   };
@@ -250,11 +254,11 @@ export function DonorWall() {
               <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[#d6c3a1] opacity-70" />
               <span className="relative inline-flex h-2 w-2 rounded-full bg-[#d6c3a1]" />
             </span>
-            {entries.length} message{entries.length === 1 ? "" : "s"}
+            {entries === null ? "Loading…" : `${entries.length} message${entries.length === 1 ? "" : "s"}`}
           </span>
         </div>
 
-        {loading ? (
+        {entries === null ? (
           <div className="mt-6 flex h-64 items-center justify-center text-sm text-white/40">
             <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Loading messages…
           </div>
