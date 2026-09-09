@@ -126,7 +126,7 @@ function EmptyState({ title, body }: { title: string; body?: string }) {
 }
 
 export default async function HomePage() {
-  const { projects, stories, metrics } = await getHomepageData();
+  const { projects, stories, metrics, provinceBreakdown, recentVerifiedActivity } = await getHomepageData();
 
   return (
     <main className="min-h-screen bg-[#060606] text-[#f3efe7]">
@@ -352,9 +352,30 @@ export default async function HomePage() {
               </div>
               <div>
                 <p className="text-sm font-semibold text-white/80">Province breakdown</p>
-                <div className="mt-3 flex h-64 items-center justify-center rounded-[1.6rem] border border-dashed border-white/12 bg-white/[0.02] px-6 text-center text-sm text-white/45">
-                  No financial data available yet.
-                </div>
+                {provinceBreakdown.length === 0 ? (
+                  <div className="mt-3 flex h-64 items-center justify-center rounded-[1.6rem] border border-dashed border-white/12 bg-white/[0.02] px-6 text-center text-sm text-white/45">
+                    No financial data available yet.
+                  </div>
+                ) : (
+                  <div className="mt-3 space-y-2.5 rounded-[1.6rem] border border-white/8 bg-white/[0.02] p-4 text-xs">
+                    {provinceBreakdown.map((p) => (
+                      <div key={p.province} className="space-y-1">
+                        <div className="flex justify-between text-white/70">
+                          <span>{p.province}</span>
+                          <span className="font-mono font-semibold text-white">{formatCurrency(p.funded)}</span>
+                        </div>
+                        <div className="h-1.5 w-full rounded-full bg-white/10">
+                          <div
+                            className="h-1.5 rounded-full bg-[#d6c3a1]"
+                            style={{
+                              width: `${Math.min(100, Math.round((p.funded / (metrics.donationsReceived || 1)) * 100))}%`,
+                            }}
+                          />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -435,10 +456,29 @@ export default async function HomePage() {
         </div>
         <div className="mt-6 grid gap-6 lg:grid-cols-2">
           <div className="rounded-[2rem] border border-white/8 bg-[#0d0d0d] p-6">
-            <p className="text-sm font-semibold uppercase tracking-[0.18em] text-[#d6c3a1]">Recent Donations</p>
-            <div className="mt-4 rounded-[1.6rem] border border-dashed border-white/12 bg-white/[0.02] p-6 text-center text-sm text-white/50">
-              No donations have been received yet.
-            </div>
+            <p className="text-sm font-semibold uppercase tracking-[0.18em] text-[#d6c3a1]">Recent Verified Donations</p>
+            {recentVerifiedActivity.length === 0 ? (
+              <div className="mt-4 rounded-[1.6rem] border border-dashed border-white/12 bg-white/[0.02] p-6 text-center text-sm text-white/50">
+                No donations have been received yet.
+              </div>
+            ) : (
+              <div className="mt-4 space-y-2.5">
+                {recentVerifiedActivity.map((activity) => (
+                  <div
+                    key={activity.id}
+                    className="flex items-center justify-between rounded-xl border border-white/5 bg-white/[0.02] px-4 py-2.5 text-xs"
+                  >
+                    <div>
+                      <p className="font-semibold text-white">{activity.displayDonor}</p>
+                      <p className="text-[0.65rem] text-white/45">{activity.province} · {activity.isRecurring ? "Monthly Recurring" : "Once-off"}</p>
+                    </div>
+                    <span className="font-mono font-bold text-[#d6c3a1]">
+                      {formatCurrency(activity.amountRand)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
           <div className="rounded-[2rem] border border-white/8 bg-[#0d0d0d] p-6">
             <p className="text-sm font-semibold uppercase tracking-[0.18em] text-[#d6c3a1]">Donor Leaderboard</p>
